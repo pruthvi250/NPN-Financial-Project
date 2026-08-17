@@ -1,0 +1,12 @@
+streamlit
+pandas
+numpy
+pypdf
+pyspellchecker
+plotly
+
+# Optional - only needed for the Q&A Assistant tab
+langchain
+langchain-google-genai
+langchain-community
+faiss-cpu
