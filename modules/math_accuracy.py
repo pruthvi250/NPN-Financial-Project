@@ -48,24 +48,81 @@ def check_cash_flow_sum(df: pd.DataFrame, tolerance: float = TOLERANCE) -> pd.Da
 
 
 def check_guidance_accuracy(df: pd.DataFrame) -> pd.DataFrame:
-    """Actual revenue vs the 'Predicted revenue' guidance figure already in the data."""
+    """Actual revenue vs the 'Predicted revenue' guidance figure already in the data.
+
+    The original formula could produce None for missing predictions and very low or
+    negative percentages when the forecast was an extreme outlier. This version:
+    - treats missing or blank forecasts as missing data, not as a hard failure
+    - avoids divide-by-zero for actual revenue of zero
+    - caps extraordinarily poor forecasts to a lower-bound floor to prevent
+      unrealistic negative/very-low accuracy results from dominating the review
+    - preserves the raw forecast and actual values for auditability
+    """
     out = df[["Year"]].copy()
     if "Quarters" in df.columns:
         out["Period"] = df["Year"].astype(str) + " " + df["Quarters"].astype(str)
     else:
         out["Period"] = df["Year"].astype(str)
     out["Actual Revenue"] = df["Revenues"]
-    out["Predicted Revenue"] = df["Predicted revenue"]
+    raw_predicted = df["Predicted revenue"]
+    out["Predicted Revenue"] = raw_predicted
+
+    def _cap_prediction(prediction, actual):
+        if pd.isna(prediction) or prediction in (None, ""):
+            return None
+        try:
+            pred = float(prediction)
+            act = float(actual)
+        except (TypeError, ValueError):
+            return None
+        if abs(pred) < 1e-9:
+            return None
+        if pd.isna(act):
+            return pred
+        cap_ratio = 3.0
+        if abs(act) > 0:
+            max_allowed = abs(act) * cap_ratio
+            pred = min(max(pred, -max_allowed), max_allowed)
+        return pred
+
+    out["Predicted Revenue (Capped)"] = out.apply(
+        lambda row: _cap_prediction(row["Predicted Revenue"], row["Actual Revenue"]), axis=1
+    )
 
     def _accuracy(row):
-        pred = row["Predicted Revenue"]
+        pred = row["Predicted Revenue (Capped)"]
         actual = row["Actual Revenue"]
-        if pd.isna(pred) or pred == 0:
+
+        if pd.isna(pred) or pred in (None, ""):
             return None
-        return round((1 - abs(actual - pred) / actual) * 100, 2)
+
+        try:
+            pred = float(pred)
+            actual = float(actual)
+        except (TypeError, ValueError):
+            return None
+
+        if abs(pred) < 1e-9:
+            return None
+
+        if pd.isna(actual):
+            return None
+
+        if abs(actual) < 1e-9:
+            if abs(pred) < 1e-9:
+                return 100.0
+            return 0.0
+
+        error_ratio = abs(actual - pred) / abs(actual)
+        if error_ratio > 1:
+            error_ratio = 1.0
+
+        accuracy = (1 - error_ratio) * 100
+        accuracy = max(0.0, min(100.0, accuracy))
+        return round(accuracy, 2)
 
     out["Accuracy %"] = out.apply(_accuracy, axis=1)
-    return out[["Period", "Actual Revenue", "Predicted Revenue", "Accuracy %"]]
+    return out[["Year", "Period", "Actual Revenue", "Predicted Revenue", "Predicted Revenue (Capped)", "Accuracy %"]]
 
 
 def check_net_income_consistency(df: pd.DataFrame, tolerance: float = TOLERANCE) -> pd.DataFrame:

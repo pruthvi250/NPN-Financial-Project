@@ -6,6 +6,7 @@ from modules.universal_validation_engine import (
     detect_reporting_frequency,
     review_financial_document,
 )
+from modules.math_accuracy import check_guidance_accuracy
 
 
 ANNUAL_DATA = pd.DataFrame(
@@ -54,3 +55,28 @@ def test_missing_data_returns_not_checked_reason():
     result = review_financial_document(missing)
     assert result["not_checked"] >= 0
     assert result["findings"] == [] or True
+
+
+def test_guidance_accuracy_handles_missing_and_outlier_predictions():
+    df = pd.DataFrame(
+        [
+            {"Year": 2021, "Revenues": 1000, "Predicted revenue": None},
+            {"Year": 2022, "Revenues": 1000, "Predicted revenue": 2000},
+            {"Year": 2023, "Revenues": 1000, "Predicted revenue": 900},
+            {"Year": 2024, "Revenues": 0, "Predicted revenue": 0},
+        ]
+    )
+    result = check_guidance_accuracy(df)
+    assert result["Accuracy %"].isna().sum() == 2
+    assert result.loc[result["Year"] == 2022, "Accuracy %"].iloc[0] <= 100
+    assert result.loc[result["Year"] == 2022, "Accuracy %"].iloc[0] >= 0
+    assert result.loc[result["Year"] == 2023, "Accuracy %"].iloc[0] > 0
+
+
+def test_guidance_accuracy_caps_extreme_prediction_outliers():
+    df = pd.DataFrame([
+        {"Year": 2025, "Revenues": 1000, "Predicted revenue": 100000},
+    ])
+    result = check_guidance_accuracy(df)
+    assert result["Predicted Revenue (Capped)"].iloc[0] <= 3000
+    assert result["Accuracy %"].iloc[0] >= 0

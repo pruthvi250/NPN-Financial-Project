@@ -69,6 +69,10 @@ def render_variance_chart(df, title, x_column="Year"):
     fig.add_hline(y=0, line_color="#64748b", line_width=1)
     fig.update_layout(
         yaxis_title="Scaled variance (each check: -1 to +1)",
+        paper_bgcolor="#ffffff",
+        plot_bgcolor="#ffffff",
+        font=dict(color="#0f172a"),
+        legend=dict(bgcolor="#ffffff"),
         margin=dict(l=20, r=20, t=45, b=20), legend_title_text="",
     )
     st.caption("Chart display uses max-absolute feature scaling per check; hover to see the unmodified actual variance. The audit table and exception flags use original values.")
@@ -239,7 +243,26 @@ def tab_math_accuracy(annual_df, tolerance):
     results = math_accuracy.run_all_checks(annual_df, tolerance=tolerance)
     for name, df in results.items():
         st.subheader(name)
-        st.dataframe(df, use_container_width=True)
+        if name == "Revenue Guidance Accuracy" and not df.empty:
+            guidance_df = df.copy()
+            guidance_df["Status"] = guidance_df["Accuracy %"].map(
+                lambda x: "Missing Guidance" if pd.isna(x) else ("Low Accuracy" if x < 50 else "Within Tolerance")
+            )
+            guidance_df["Predicted Revenue"] = guidance_df["Predicted Revenue"].map(
+                lambda x: "Missing" if pd.isna(x) or (isinstance(x, (int, float)) and abs(float(x)) < 1e-9) else x
+            )
+            guidance_df["Status"] = guidance_df["Status"].replace(
+                {"Missing Guidance": "⚠️ Missing Guidance", "Low Accuracy": "⚠️ Low Accuracy", "Within Tolerance": "✅ Within Tolerance"}
+            )
+            missing_count = guidance_df["Status"].str.contains("Missing Guidance", na=False).sum()
+            low_count = guidance_df["Status"].str.contains("Low Accuracy", na=False).sum()
+            if missing_count:
+                st.info(f"{missing_count} row(s) have no usable forecast guidance.")
+            if low_count:
+                st.warning(f"{low_count} row(s) show low forecast accuracy and should be reviewed.")
+            st.dataframe(guidance_df, use_container_width=True)
+        else:
+            st.dataframe(df, use_container_width=True)
         render_variance_chart(df, f"{name}: Variance by Year")
         if "Flag" in df.columns and df["Flag"].any():
             st.warning(f"{int(df['Flag'].sum())} period(s) flagged exceeding ${tolerance:,.1f}M tolerance.")
@@ -276,30 +299,6 @@ def tab_prior_year_tieout(annual_df, quarterly_df, tolerance):
             margin=dict(l=20, r=20, t=45, b=20), legend_title_text="",
         )
         st.plotly_chart(growth_fig, use_container_width=True)
-
-    st.subheader("Correlation Matrix")
-    correlation_df = prior_year_tieout.compute_correlations(annual_df)
-    st.dataframe(correlation_df, use_container_width=True)
-    if not correlation_df.empty:
-        correlation_fig = go.Figure(data=go.Heatmap(
-            z=correlation_df.values,
-            x=correlation_df.columns,
-            y=correlation_df.index,
-            zmin=-1, zmax=1,
-            colorscale="RdBu",
-            reversescale=True,
-            text=correlation_df.round(2).values,
-            texttemplate="%{text}",
-            textfont={"size": 12},
-            hovertemplate="%{y} × %{x}<br>Correlation: %{z:.3f}<extra></extra>",
-            colorbar={"title": "Correlation"},
-        ))
-        correlation_fig.update_layout(
-            title="Correlation Heatmap", template="plotly_white",
-            xaxis={"side": "bottom"}, yaxis={"autorange": "reversed"},
-            margin=dict(l=20, r=20, t=50, b=20),
-        )
-        st.plotly_chart(correlation_fig, use_container_width=True)
 
     st.session_state["tieout_result"] = tieout_df
 
@@ -505,40 +504,6 @@ def tab_universal_validation(annual_df, quarterly_df, tolerance):
     st.json(result)
 
 
-def tab_qa():
-    st.header("Q&A Assistant (optional)")
-    st.caption(
-        "Ask natural-language questions over uploaded PDF reports using your Google Gemini API key."
-    )
-    api_key = st.text_input("Google API key", type="password")
-    pdf_files = st.file_uploader("Upload PDF(s)", type="pdf", accept_multiple_files=True, key="qa_pdfs")
-
-    if st.button("Index documents"):
-        if not api_key:
-            st.error("Enter an API key first.")
-        elif not pdf_files:
-            st.error("Upload at least one PDF first.")
-        else:
-            try:
-                from modules import qa_assistant
-                with st.spinner("Extracting and indexing..."):
-                    text = qa_assistant.get_pdf_text(pdf_files)
-                    chunks = qa_assistant.get_text_chunks(text)
-                    qa_assistant.build_vector_store(chunks, api_key)
-                st.success("Documents indexed. Ask a question below.")
-                st.session_state["qa_ready"] = True
-                st.session_state["qa_api_key"] = api_key
-            except ImportError as e:
-                st.error(f"Missing dependency: {e}")
-
-    question = st.text_input("Your question")
-    if question and st.session_state.get("qa_ready"):
-        from modules import qa_assistant
-        with st.spinner("Thinking..."):
-            answer = qa_assistant.answer_question(question, st.session_state["qa_api_key"])
-        st.write(answer)
-
-
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -559,7 +524,6 @@ def main():
         "Financial Ratios & Risk",
         "Spelling & Grammar",
         "WP-514 Generator",
-        "Q&A Assistant",
     ]
     tabs = st.tabs(tab_names)
 
@@ -579,8 +543,6 @@ def main():
         tab_grammar()
     with tabs[7]:
         tab_wp514(annual_df)
-    with tabs[8]:
-        tab_qa()
 
 
 if __name__ == "__main__":
