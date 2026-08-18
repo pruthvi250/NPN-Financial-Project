@@ -18,7 +18,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
-from modules import data_loader, math_accuracy, prior_year_tieout, internal_consistency, grammar_check, wp514, financial_ratios
+from modules import data_loader, math_accuracy, prior_year_tieout, internal_consistency, grammar_check, wp514, financial_ratios, universal_validation_engine
 
 # Ensure submodules are reloaded dynamically if changed
 importlib.reload(data_loader)
@@ -28,6 +28,7 @@ importlib.reload(internal_consistency)
 importlib.reload(grammar_check)
 importlib.reload(wp514)
 importlib.reload(financial_ratios)
+importlib.reload(universal_validation_engine)
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 DEFAULT_ANNUAL = os.path.join(DATA_DIR, "Annual.csv")
@@ -465,6 +466,45 @@ def tab_wp514(annual_df):
             st.json(wp)
 
 
+def tab_universal_validation(annual_df, quarterly_df, tolerance):
+    st.header("Universal Financial Statement Validation")
+    st.caption("Deterministic engine for balance-sheet math, cash flow reconciliation, annual/quarterly movement analysis, and auditability checks.")
+
+    comparison_df = annual_df if not quarterly_df.empty else annual_df
+    result = universal_validation_engine.review_financial_document(comparison_df, tolerance=tolerance)
+
+    st.subheader("Overall Result")
+    status_color = {
+        "PASS": "green",
+        "WARNING": "orange",
+        "FAIL": "red",
+        "NOT_CHECKED": "gray",
+    }.get(result["overall_status"], "gray")
+    st.markdown(f"<div style='padding:12px;border-radius:8px;background:{status_color};color:white;font-weight:600;'>Overall Status: {result['overall_status']}</div>", unsafe_allow_html=True)
+
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Checks Performed", result["checks_performed"])
+    with col2:
+        st.metric("Passed", result["passed"])
+    with col3:
+        st.metric("Warnings", result["warnings"])
+    with col4:
+        st.metric("Exceptions", result["exceptions"])
+
+    if result["findings"]:
+        st.subheader("Findings")
+        for finding in result["findings"]:
+            st.warning(f"{finding.get('check_name', 'Check')}: {finding.get('explanation', '')}")
+
+    if result["material_movements"]:
+        st.subheader("Material Movements")
+        st.dataframe(pd.DataFrame(result["material_movements"]), use_container_width=True)
+
+    st.subheader("Rule Results")
+    st.json(result)
+
+
 def tab_qa():
     st.header("Q&A Assistant (optional)")
     st.caption(
@@ -515,6 +555,7 @@ def main():
         "Mathematical Accuracy",
         "Prior Year Tie-Out",
         "Internal Consistency",
+        "Universal Validation",
         "Financial Ratios & Risk",
         "Spelling & Grammar",
         "WP-514 Generator",
@@ -531,12 +572,14 @@ def main():
     with tabs[3]:
         tab_internal_consistency(annual_df, quarterly_df, tolerance)
     with tabs[4]:
-        tab_financial_ratios(annual_df)
+        tab_universal_validation(annual_df, quarterly_df, tolerance)
     with tabs[5]:
-        tab_grammar()
+        tab_financial_ratios(annual_df)
     with tabs[6]:
-        tab_wp514(annual_df)
+        tab_grammar()
     with tabs[7]:
+        tab_wp514(annual_df)
+    with tabs[8]:
         tab_qa()
 
 
